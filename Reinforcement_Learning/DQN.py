@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
+# Deep Q-Learning Implementation.
+# Some tests w/ the agent implementation have been done further down, comment out the cells you do not want to train.
+# To see the results of any agent, use the policy inside an gymnasium w/ render_mode='human'.
+
+# In[1]:
 
 
 import torch
@@ -35,6 +39,13 @@ env_3 = gym.make("CliffWalking-v0")
 # In[4]:
 
 
+env_4 = gym.make('CartPole-v1', render_mode='human')
+env_5 = gym.make('CartPole-v1')
+
+
+# In[5]:
+
+
 # Each agent's experience will be stored within an experience tuple.
 Experience = namedtuple("Experience", field_names=['state', 'action', 'reward', 'done', 'next_state'])
 
@@ -60,20 +71,32 @@ class ReplayMemory():
         # Get a tuple where elements at each position are grouped in a tuple-> See zip() function.
         states, actions, rewards, next_states, dones = zip(*(random.sample(self.memory, batch_size)))
 
+        # Cannot convert a tuple of tensors directly w/ torch.tensor().
+        # So we check if our tuple is made of tensors first, and use proper function.
+        if type(states[0])==torch.Tensor:
+            states = torch.stack(states)
+            next_states = torch.stack(next_states)
+        else:
+            states = torch.tensor(states)
+            next_states = torch.tensor(next_states)
+        actions = torch.tensor(actions)
+        rewards = torch.tensor(rewards)
+        dones = torch.tensor(dones).bool()
+
         # Tuples are converted to Pytorch Tensor.
         return (
-            torch.tensor(states), # Merge every state tensor into a new tensor.
-            torch.tensor(actions),
-            torch.FloatTensor(rewards), # Float dtype needed for some computation.
-            torch.tensor(next_states),
-            torch.tensor(dones).bool()
+            states,
+            actions, 
+            rewards,
+            next_states,
+            dones
         )
     
     def __len__(self):
         return len(self.memory)
 
 
-# In[5]:
+# In[6]:
 
 
 class Emb_ANN(nn.Module):
@@ -102,22 +125,54 @@ class Emb_ANN(nn.Module):
         return self.network(input)
 
 
-# In[42]:
+# In[7]:
+
+
+class ANN(nn.Module):
+    '''
+        Num of states in our environment=in_features.
+    '''
+    
+    def __init__(self, in_features: int, out_features: int, hidden_size: int):
+        '''
+            Args:
+                in_features: The number of states inside our environment.
+                out_features: Number of actions possible.
+                hidden_size: Determines number of neurons inside the hidden layer.
+        '''
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(in_features, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, out_features),
+            nn.SiLU()
+        )
+    def forward(self, input: torch.tensor):
+        '''
+            input: State number.
+            output: Q(s,a) for each action available at state s.
+        '''
+        return self.network(input)
+
+
+# In[14]:
 
 
 class Agent():
 
-    def __init__(self, envi: gym.Env, rm_capacity: int=200, learning_rate:float=0.001, hidden_size: int=32):
-        self.num_s = envi.observation_space.n
+    def __init__(self, envi: gym.Env, in_features, out_features,
+                 rm_capacity: int=200, learning_rate:float=0.001, hidden_size: int=32):
+
         self.num_a = envi.action_space.n
-        self.transition = envi.unwrapped.P 
         self.env = envi
 
         self.rm = ReplayMemory(capacity=rm_capacity)
 
         # Need two neural networks.
         # Q_Table is the target network.
-        self.target_nn = Emb_ANN(in_features=self.num_s, out_features=self.num_a, hidden_size=hidden_size)
+        self.target_nn = Emb_ANN(in_features=in_features, out_features=out_features, hidden_size=hidden_size)
         # Copy the parameters of target_nn.
         self.primary_nn = deepcopy(self.target_nn)
 
@@ -125,18 +180,9 @@ class Agent():
         # Primary neural network is the one that will get optimized/updated.
         self.optimizer = torch.optim.Adam(self.primary_nn.parameters(), lr=learning_rate)
 
-        # Arbitrary initialization of the determiistic policy.
-        self.policy = np.zeros(self.num_s).astype(int)
-
         # Ez_greedy parameters.
         self.ez_duration = 0
         self.ez_action = 0
-
-    def reset_policy(self):
-        '''
-            Resets policy to default values.
-        '''
-        self.policy = np.zeros(self.num_s).astype(int)
 
     def use_policy(self, env: gym.Env, max_no_steps: int=20):
         '''
@@ -145,7 +191,7 @@ class Agent():
         '''
         
         state, _ = env.reset()
-        action = self.policy[state]
+        action = torch.argmax(self.target_nn(torch.tensor(state))).item()
         
         reward = 0
         counter = 0 # If policy not good, then this will make it stop automatically.
@@ -155,7 +201,7 @@ class Agent():
             reward += r
             if done: break
                 
-            action = self.policy[state]
+            action = torch.argmax(self.target_nn(torch.tensor(state))).item()
             state = next_state
             
             counter += 1
@@ -216,13 +262,15 @@ class Agent():
             self.ez_duration -= 1 # Decreasing duration of current option.
         return self.ez_action # Action chosen returned.
 
-    def boltzmann(self, s: int, temp: float):
+    def boltzmann(self, s, temp: float):
         '''
             Softmax function with hyper-parameter denoted temperature.
             Cooling the temperature decreases the entropy, accentuating the common events.
-            
-            temp-> 0: Uniform distribution.
-            temp-> Infinity: Trivial distribution with all mass concentrated on highest-prob class.
+
+            Args:
+                s: Input state, depends very much on the environment. No predefined data-type.
+                temp-> 0: Uniform distribution.
+                temp-> Infinity: Trivial distribution with all mass concentrated on highest-prob class.
         '''
         
         actions = np.arange(0, self.num_a)
@@ -262,7 +310,7 @@ class Agent():
         states, actions, rewards, next_states, dones = self.rm.sample(batch_size)
 
         # Generating target_value, our agent's prediction, based on Q-Learning w/ greedy-policy.
-        target_value = rewards
+        target_value = rewards.float() # Conversion to float needed for computations.
         # If experience does not terminate the episode, then we update w/ greedy.
         for s in range(states.size()[0]):
             if not dones[s]:
@@ -286,7 +334,7 @@ class Agent():
 
 # Algorithms.
 
-    def e_dqn(self, episodes: int, C: int, batch_size: int, epsilon: float):
+    def e_dqn(self, episodes: int, C: int, batch_size: int, epsilon: float, discount_rate: float=0.9):
         '''
             Simplest DQN algorithm.
             Epsilon-greedy as exploration algorithm w/o any decay over the epsilon.
@@ -316,7 +364,7 @@ class Agent():
                 state = next_state
 
                 # Optimize primary_nn.
-                loss = self.optimize_model(20)
+                loss = self.optimize_model(20, discount_rate)
 
                 # At each C steps, we copy the primary parameters to the target.
                 step_counter += 1
@@ -333,13 +381,11 @@ class Agent():
                 self.target_copy()
 
         self.target_copy() # Copy made when training finished.
-        for s in range(self.num_s):
-            with torch.no_grad():
-                self.policy[s] = torch.argmax(self.target_nn(torch.tensor(s))).item()
+        
 
         return rewards, losses
 
-    def ez_dqn(self, episodes: int, C: int, batch_size: int, epsilon: float, 
+    def ez_dqn(self, episodes: int, C: int, batch_size: int, epsilon: float, discount_rate: float=0.9, 
                       scale: float=2.5, decay_rate = 0.0005, has_decay=True):
         '''
             Deep Q-Learning w/ temporally-extended epsilon-greedy exploration policy.
@@ -352,10 +398,10 @@ class Agent():
         losses = []
 
         for k in range(episodes):
-            state, info = env.reset()
+            state, info = self.env.reset()
             done = False
             total_reward = 0
-            total_loss = 0
+            total_loss = torch.Tensor(0)
 
             while not done:
                 if has_decay:
@@ -374,12 +420,12 @@ class Agent():
                 self.rm.push(agent_experience)
 
                 # Option is blocked because of a wall. # Optional.
-                if state == next_state:
-                    self.ez_duration = 0
+                #if state == next_state:
+                #    self.ez_duration = 0
 
                 state = next_state
 
-                loss = self.optimize_model(batch_size) # Optimize model after each agent's step.
+                loss = self.optimize_model(batch_size, discount_rate) # Optimize model after each agent's step.
                 total_loss += loss
 
             # Appending statistics when episode is done.
@@ -390,13 +436,9 @@ class Agent():
             if (k%C) == 0:
                 self.target_copy()
 
-        for s in range(self.num_s):
-            with torch.no_grad():
-                self.policy[s] = torch.argmax(self.target_nn(torch.tensor(s))).item()
-
         return rewards, losses
 
-    def boltzmann_dqn(self, episodes: int, C: int, batch_size: int, temperature: float=1):
+    def boltzmann_dqn(self, episodes: int, C: int, batch_size: int, discount_rate: float=0.9, temperature: float=1):
         '''
             Deep Q-Learning w/ Boltzmann as the exploration policy.
             Temperature hyper-parameter defines the entropy, decreasing it accentuates the common events.
@@ -432,7 +474,7 @@ class Agent():
 
                 step_counter += 1
             
-                loss = self.optimize_model(batch_size) # Optimize model after each step.
+                loss = self.optimize_model(batch_size, discount_rate) # Optimize model after each step.
                 with torch.no_grad():
                     total_loss += loss
             
@@ -444,21 +486,18 @@ class Agent():
                 self.target_copy() # Copies primary to target.
 
         self.target_copy() # Copies the primary to target when training is finished.
-        
-        for s in range(self.num_s):
-            with torch.no_grad():
-                self.policy[s] = torch.argmax(self.target_nn(torch.tensor(s))).item()
 
         return rewards, losses
 
 
-# In[58]:
+# In[15]:
 
 
-agent = Agent(env_3)
+agent = Agent(env_3, env_3.observation_space.n, env_3.action_space.n)
+# Only choose one of the 3 training algorithm:
 
 
-# In[372]:
+# In[16]:
 
 
 # Epsilon-Greedy.
@@ -476,7 +515,7 @@ episodes = 500
 r, l = agent.ez_dqn(episodes, C=3, batch_size=15, epsilon=0.7, has_decay=False)
 
 
-# In[59]:
+# In[16]:
 
 
 # Boltzmann.
@@ -485,13 +524,7 @@ episodes = 100
 r, l = agent.boltzmann_dqn(episodes, C=3, batch_size=15, temperature=1)
 
 
-# In[56]:
-
-
-agent.policy
-
-
-# In[61]:
+# In[17]:
 
 
 agent.use_policy(env_2, 20)
@@ -504,3 +537,63 @@ agent.use_policy(env_2, 20)
 with torch.no_grad():
     plt.plot(range(len(l)), l)
 
+
+# In[17]:
+
+
+class CartPole_Agent(Agent):
+    '''
+        Subclass of basic Agent class.
+        Model optimization will be mostly unchanged.
+
+        Does not seem very efficient at training the algorithm.
+            I will need to use another algorthm such as Reinforce or A2C.
+    '''
+    def __init__(self, envi: gym.Env, in_features, out_features,
+                 rm_capacity: int=200, learning_rate:float=0.001, hidden_size: int=32):
+        super().__init__(envi, in_features, out_features, rm_capacity, learning_rate, hidden_size)
+
+        # Neural networks are different from the original parent class.
+        # Cannnot use embeddings.
+        self.target_nn = ANN(in_features=in_features, out_features=out_features,  hidden_size=hidden_size)
+        self.primary_nn = deepcopy(self.target_nn)
+
+
+# In[18]:
+
+
+agent = CartPole_Agent(env_5, 4, env_5.action_space.n, hidden_size=128, learning_rate=0.01)
+
+
+# In[19]:
+
+
+episodes = 2000
+
+r, l = agent.boltzmann_dqn(episodes, C=2, batch_size=10, discount_rate=0.95)
+
+
+# In[38]:
+
+
+episodes = 2000
+r, l = agent.ez_dqn(episodes, C=3, batch_size=15, epsilon=0.9)
+
+
+# In[23]:
+
+
+episodes = 2000
+r, l = agent.e_dqn(episodes, C=3, batch_size=15, epsilon=0.7)
+
+
+# In[20]:
+
+
+plt.plot(range(len(l)), l)
+
+
+# In[21]:
+
+
+plt.plot(range(len(r)), r)
