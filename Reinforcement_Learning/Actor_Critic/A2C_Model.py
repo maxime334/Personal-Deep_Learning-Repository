@@ -19,26 +19,6 @@ from Experience import Experience
 from Experience import ReplayMemory
 
 
-# In[2]:
-
-
-# Acts as a shared network.
-# To be considered.
-class A2C_nn(nn.Module):
-    def __init__(self, in_features: int, out_features: int, hidden_size: int):
-        super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(in_features, hidden_size),
-            nn.SiLU(),
-            nn.Linear(hidden_size, out_features)
-        )
-    def forward(self, input):
-        # Outputs critic->value and actor->policy.
-        log_distribution = F.log_softmax(self.network(input), dim=0)
-        value = F.silu(self.network(input))
-        return log_distribution, value
-
-
 # In[42]:
 
 
