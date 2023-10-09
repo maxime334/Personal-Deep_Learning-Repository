@@ -185,6 +185,13 @@ class Agent():
         return self.ez_action # Action chosen returned.
 
     def optimize_model(self, batch_size: int, discount_rate: float):
+        '''
+            Optimizes both the Actor and Critic, non-target, networks.
+            Should be done after each trajectory/episode.
+            Args:
+                batch_size: Batch size to sample from the replay memory.
+                discount_rate: Discount factor for the state value.
+        '''
         self.actor_opt.zero_grad(), self.critic_opt.zero_grad()
 
         # No optimization done if not enough samples.
