@@ -81,6 +81,7 @@ def basic_train(episodes: int, C: int, batch_size: int, discount_rate: float, ep
                 the conventional epsilon-greedy.
     '''
 
+    # Statistics.
     losses = [] # Losses at each optimization will be appended here.
     
     for k in range(episodes):
@@ -109,7 +110,7 @@ def basic_train(episodes: int, C: int, batch_size: int, discount_rate: float, ep
             # Statistics.
             total_reward += reward
     
-            # Appends agent's experience to both replay_memory and epi_buffer.
+            # Appends agent's experience to replay_memory.
             experience = Experience(state, action, reward, next_state, done)
             agent.rm.push(experience)
 
@@ -117,7 +118,6 @@ def basic_train(episodes: int, C: int, batch_size: int, discount_rate: float, ep
             state = next_state
 
         # Optimize both actor and critic.
-        # Based on Critic Regularized Regression.
         loss = agent.optimize_model(batch_size, discount_rate).detach()
         losses.append(loss.item())
         
