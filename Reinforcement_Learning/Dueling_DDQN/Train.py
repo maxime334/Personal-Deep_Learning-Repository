@@ -84,7 +84,6 @@ def train(agent: Agent, episodes):
 # In[3]:
 
 
-env = gym.make('CartPole-v1')
 if __name__ == '__main__':
     learning_rate = 1e-3
     buffer_size = 50000
