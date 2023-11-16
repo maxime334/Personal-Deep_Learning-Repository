@@ -81,7 +81,7 @@ def train(agent: Agent, episodes):
     return losses
 
 
-# In[3]:
+# In[14]:
 
 
 if __name__ == '__main__':
@@ -96,10 +96,34 @@ if __name__ == '__main__':
     
     epsilon = 0.1
     decay_rate = 0 # No decay has been applied, but around 0.005 can be used.
-    episodes = 200 # Use a number%10 == 0.
+    episodes = 120 # Use a number%10 == 0.
     print(f'Epsilon after {episodes} episodes is {a.decay(episodes, epsilon, decay_rate)}')
 
     losses = train(a, episodes)
     # Plot loss.
     plt.plot(range(int(episodes/10)), losses)
+
+    # Empties the memory.
+    torch.cuda.empty_cache()
+
+    # Evaluation.
+    envi = gym.make('CartPole-v1', render_mode='human')
+    state, info = envi.reset()
+    done = False
+    total_reward = 0
+    while not done:
+        # Epsilon = 0.
+        action = a.select_action(state, 0)
+        next_state, reward, done, _, _ = envi.step(action)
+        total_reward += reward
+    
+        state = next_state
+    
+    print(f'Reward:{total_reward}')
+
+
+# In[ ]:
+
+
+
 
